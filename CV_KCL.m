@@ -11,26 +11,49 @@ V_T = R*T/F;                % V
 l_e = 6e-4;                 % m, electrode thickness
 l_res = l_e;                % m, reservoir thickness
 
-% Chemical parameters
-s_mo = 2;                   % Number of mobile species
-s_ch = 0;                   % Number of immobile species
+% Chemical parameters for mobile species
+% Order: [Cl, K, H, OH]
+s_mo = 4;                   % Number of mobile species
+z_mo_input = [-1; 1; 1; -1];
+D_input = [2.03e-9; 1.8e-9; 9.13e-9; 5.16e-9];
+mu_att = [0; 0; 0; 0];
+
+pH_feed = 7;                % pH of reservoir boundary condition (feed)
+c_f = [1e3; 1e3; 10^(3-pH_feed); 10^(-11+pH_feed)];  %mol/m^3, B.C.
+c_i = c_f;                  % Initial concentrations of mobile species
+
+% Chemical parameters for chemical surface groups
+% Order: [COOH, COO] (NOTE: S_ch=0 neglects surface groups for now)
+s_ch = 0;                   % Number of chemical surface groups
+z_ch_input = [0; -1];
+c_i_ch = [100; 0];          % mol/m^3 Initial condition, surface groups
+
 
 % Electrode properties
 C_S = 200e6;                %F/m^3, Stern Capacitance
 C_external = 29.4;          % F/m^2, External Capacitance
 m_e = 0.109*1e-3;           % kg, electrode mass
 EER = 0;                    % Ohm, TODO: where is this resistance?
+p_ma = 0.7;                 % Electrode macropore porosity
+p_mi = 0.172;               % Electrode micropore porosity
+p_res = 1;                  % Reservoir porosity
 
 % CV Settings
 driving_force = 1;          % 1-Potential Driven; 2-Current Driven
 scan_rate = 10e-3;          % V/s
-V_magnitude = 0.6;          % V
-Smoothing_Zone = 0.1;       % s, smoothing transition from + to -
+V_charge = 0.6;             % V
+V_discharge = 0;            % V
+I_app = 0.3;                % A/m^2
+smoothing_time = 0.1;       % s, smoothing transition from + to -
 A_c = 25*1e-6;              % m^2, total electrode cross sectional area
 
 % Numerical parameters
 N1 = 10;                    % Number of mesh points, reservoir region
 N2 = 10;                    % Number of mesh points, electrode region
+dt_target = 1e-1;           % s, Target time step
+dt_output = 1;              % s, Time interval for data output
+dt_plot = 1;                % s, Time interval for plotting
+totalCycles = 10;           % Total number of CV cycles to run
 
 % Simulation options
 iteration_num = 6;          % Iterations (macro-micro coupling)
@@ -40,101 +63,30 @@ steady_state_solver = 0;    % TODO: what is steady_state
 Bulk_Reaction_switch = 0;   % DEBUG: turn off bulk reactions
 Faradaic_switch = 0;        % DEBUG: turn off Faradaic reactions
 
-%% DO NOT CHANGE BELOW
-% Simulation setup
-N = N1+N2;                  % Total number of mesh points
-eqn_ma = s_mo+1;            % Number of "macropore" eqns (+1 for phi)
-eqn_mi = eqn_ma+s_ch;       % Number of "micropore" eqns
+% Output formatting
+save_name = 'CV_restructure';
+save_directory = './output/';
 
+%% DO NOT CHANGE BELOW HERE
+% Simulation setup, convenience parameters
+N = N1+N2;                  % Total number of mesh points
+eqn_ma = s_mo + 1;          % Number of "macropore" eqns (+1 for phi)
+eqn_mi = eqn_ma+s_ch;       % Number of "micropore" eqns
+dt = dt_target;             % Initialize time step
+FCT = V_charge/scan_rate*4; % Full CV cycle time
+Switch_Time = FCT/2;        % Half-cycle time
 L = l_res + l_e;            % Total domain thickness
 
-Q_vol = 0;                  % m^3/s, flow rate (from FTE CDI, leave 0)
+% Deprecated parameters from FTE CDI, leave as zero
+Q_vol = 0;                  % m^3/s, flow rate
 u = Q_vol/A_c;              % m/s superficial velocity
 
-FCT = V_magnitude/scan_rate*4;%s
-Switch_Time = FCT/2;
-
 current_collect_index = floor(N1/2);
-t_restart = 0;
 
-if initial_condition_solver == 1
-    initial_guess = 1;
-    steady_state_solver = 1;
-    save_all_name = 'CV_initial_ALL.mat';
-    save_name = 'CV_initial.mat';
-else
-    initial_guess = 0;
-    load_name = 'CV_initial.mat';
-    save_all_name = 'CV_ALL.mat';
-    save_name = 'CV.mat';
+% Output folder
+if ~isfolder(save_directory)
+    mkdir(save_directory)
 end
-
-% Time & Plot
-dt_initial = 1e-1;
-dt = dt_initial;
-if initial_condition_solver == 1
-    dt_interval = 1e1;
-else
-    dt_interval = 1e-1;
-end
-plot_dt_check = @(t) mod(t,10);
-
-dt_count = 0;
-if steady_state_solver == 1
-    t_final = 1e1;        % final time
-    dt_max = dt_interval/2;
-    dt_min = 0.001;
-    t_plan = linspace(0,t_final,ceil(t_final/dt_interval)+1);   % desired plot times
-else
-    t_final = 1e4;        % final time
-    dt_max = dt_interval;
-    dt_min = 0.001;
-%     t_plan = linspace(0,t_final,ceil(t_final/dt_interval)+1);   % desired plot times
-    t_plan = linspace(t_restart,t_final,ceil((t_final-t_restart)/dt_interval)+1);   % desired plot times
-end
-
-pn = length(t_plan);          % number of desired plots
-pc = 1;               % plot counter
-dt_stored_switch = 0;
-
-% Saving Data
-save_path_format = 'CV_curve//';
-save_path = sprintf(save_path_format);
-mkdir(save_path)
-t_saved = nan(t_final*2,1);
-t_plotting_array = nan(t_final*2,1);
-c_eff_array = nan(t_final*2,1);
-current_array = nan(t_final*2,1);
-V_plotting_array = nan(t_final*2,1);
-ratio_phi_D_array = nan(N,t_final*2);
-dt_plotting_array = nan(t_final*2,1);
-t_plotting_index = 1;
-
-v_saved = nan(N*eqn_ma,t_final*2);
-v2_saved = nan(N*eqn_mi,t_final*2);
-phi_el_saved = nan(t_final*2,1);
-saved_data_index = 1;
-
-%% Initialization
-% TODO - ELIMINATE THIS CONDITIONAL
-if initial_condition_solver == 1
-    l_e = 1e-4/1e2;         % m, electrode thickness
-else
-    l_e = 6e-4;             % m
-end
-
-if driving_force == 1
-    V_discharge = 0;%V 
-else
-    if initial_condition_solver == 1
-        I_app = 0;% A/m^2 
-    else
-        I_app = 0.3;% A/m^2
-    end
-end
-p_ma_value = 0.7;
-p_mi_value = 0.172;%0.172;
-p_res_value = 1;
 
 % Mobile group
 index_R = 10;
@@ -147,56 +99,6 @@ index_OH = 5;
 % Immobile group
 index_COOH = eqn_ma+1;
 index_COO = eqn_ma+2;
-
-z_R = 1;
-z_Cl = -1;
-z_O = 2;
-z_K = 1;
-z_H = 1;
-z_OH = -1;
-
-z_COOH = 0;
-z_COO = -1;
-z_mo_input = [z_K;z_Cl;z_O;z_K;z_H;z_OH];
-% z_mo_input = [z_R;z_Cl;z_O];
-z_chem = [z_COOH;z_COO];
-
-D_R = 2.57e-9;  %m^2/s
-D_Cl = 2.03e-9;%2.03e-9;  %m^2/s
-D_H = 9.13e-9;
-D_OH = 5.16e-9;
-D_O = 2.57e-9;
-D_K = 1.8e-9;
-D_input = [D_K;D_Cl;D_O;D_K;D_H;D_OH];
-
-mu_R = 0;
-mu_Cl = 0;
-mu_O = 0;
-mu_H = 0;
-mu_OH = 0;
-mu_K = 0;
-mu_att = [mu_R;mu_Cl;mu_O;mu_K;mu_H;mu_OH];
-
-pH_feed = 7;
-
-c_f_Cl = 1000;    % mM or mol/m^3
-c_f_H = 10^(3-pH_feed);
-c_f_OH = 10^(-11+pH_feed);
-c_f_O = 10;
-c_f_R = 0;
-c_f_K = 1000;
-fixed_chem_charge = -0;
-
-c_i_HX = 0;
-c_i_X = 0;
-c_i_YH = c_i_X;
-c_i_Y = c_i_HX;
-c_i_COOH = 100;
-c_i_COO = 0;
-c_f = [c_f_K;c_f_Cl;c_f_O;c_f_K;c_f_H;c_f_OH];  %mol/m^3, feed concentration
-c_i = [c_f_K;c_f_Cl;c_f_O;c_f_K;c_f_H;c_f_OH;0];
-c_i_ch = [c_i_COOH;c_i_COO];
-c_ref = 1;  %mol/m^3
 
 k_ma = [1e0,1e8];
 R_bulk = [0, index_H;
@@ -217,13 +119,6 @@ R_chem = [index_COOH, index_H;
           0,          index_COO];
 P_chem = [index_H,    index_COOH;
           index_COO,  0];
-
-
-L_reservoir_domain_check = @(x) x<0;
-anode_domain_check = @(x) 0;
-seperator_domain_check = @(x) 0;
-cathode_domain_check = @(x) (0<=x).*(x<=l_e);
-R_reservoir_domain_check = @(x) 0;
 
 % Initialization - Mesh
 % x_f = linspace(-l_res,l_e,N+1)';
@@ -274,23 +169,23 @@ for i = 1:s_mo
     z_mo(i:eqn_ma:end) = z_mo_input(i);
 end
 
-p = nan(N*eqn_ma,1);
+p_ma_vec = nan(N*eqn_ma,1);
 for i = 1:s_mo+1
-    p(i:eqn_ma:end) = L_reservoir_domain_check(x_c)*p_res_value+cathode_domain_check(x_c).*p_ma_value;
+    p_ma_vec(i:eqn_ma:end) = L_reservoir_domain_check(x_c)*p_res_value+cathode_domain_check(x_c).*p_ma;
 end
 
-tau = p.^(-1/2);
+tau = p_ma_vec.^(-1/2);
 
-p_mi = nan(N*eqn_ma,1);
+p_mi_vec = nan(N*eqn_ma,1);
 for i = 1:s_mo+1
-    p_mi(i:eqn_ma:end) = L_reservoir_domain_check(x_c)*0+cathode_domain_check(x_c).*p_mi_value;
+    p_mi_vec(i:eqn_ma:end) = L_reservoir_domain_check(x_c)*0+cathode_domain_check(x_c).*p_mi;
 end
 
 D = nan(N*eqn_ma,1);
 for i = 1:s_mo
     D(i:eqn_ma:end) = D_input(i);
 end
-D_eff = D.*p./tau;
+D_eff = D.*p_ma_vec./tau;
 D_eff_f = (D_eff(1:(N-1)*eqn_ma)+ D_eff(1+eqn_ma:eqn_ma*N))/2;
 
 
@@ -424,16 +319,16 @@ end
 while 1
     
     % Applied voltage to the whole circuit
-    Charging_smoothing_ss = 1 - exp(-(t+dt)/Smoothing_Zone);
-    Charging_smoothing = 1 - exp(-mod((t+dt),FCT)/Smoothing_Zone);
-    Discharging_smoothing = 1 - exp(-(mod(t+dt-Switch_Time,FCT))/Smoothing_Zone);
+    Charging_smoothing_ss = 1 - exp(-(t+dt)/smoothing_time);
+    Charging_smoothing = 1 - exp(-mod((t+dt),FCT)/smoothing_time);
+    Discharging_smoothing = 1 - exp(-(mod(t+dt-Switch_Time,FCT))/smoothing_time);
 
     if steady_state_solver == 1
         V_app = V_discharge*Charging_smoothing_ss;
     else
         V_app = scan_rate*t.*(0<=t).*(t<=FCT/4)+...
-                 (V_magnitude-scan_rate*mod(t-FCT/4,FCT)).*(0<mod(t-FCT/4,FCT)).*(mod(t-FCT/4,FCT)<Switch_Time)+...
-                 (-V_magnitude+scan_rate*mod(t-FCT*3/4,FCT)).*(0<=mod(t-FCT*3/4,FCT)).*(mod(t-FCT*3/4,FCT)<=Switch_Time).*(t>FCT/4);
+                 (V_charge-scan_rate*mod(t-FCT/4,FCT)).*(0<mod(t-FCT/4,FCT)).*(mod(t-FCT/4,FCT)<Switch_Time)+...
+                 (-V_charge+scan_rate*mod(t-FCT*3/4,FCT)).*(0<=mod(t-FCT*3/4,FCT)).*(mod(t-FCT*3/4,FCT)<=Switch_Time).*(t>FCT/4);
         V_app = -V_app;
     end
     
@@ -525,7 +420,7 @@ while 1
             % Constrcuting Diagonal, for transport eq.
             index1 = i:i+s_mo-1;
             index2 = index1;
-            element =   p(i:i+s_mo-1)/dt...
+            element =   p_ma_vec(i:i+s_mo-1)/dt...
                         + D_eff_f(i:i+s_mo-1)./delta_x_f(n)./delta_x_c(n).*...
                         ( 1-z_mo(i:i+s_mo-1).* (v(i+s_mo+eqn_ma)-v(i+s_mo))/2 )...
                         + D_eff_f(i-eqn_ma:i+s_mo-1-eqn_ma)./delta_x_f(n-1)./delta_x_c(n).*...
@@ -651,7 +546,7 @@ while 1
         % Constrcuting Diagonal, for transport eq.
         index1 = i:i+s_mo-1;
         index2 = index1;
-        element =   p(i:i+s_mo-1)/dt...
+        element =   p_ma_vec(i:i+s_mo-1)/dt...
                     + u/delta_x_f(n-1)+...
                     + D_eff_f(i-eqn_ma:i+s_mo-1-eqn_ma)./delta_x_f(n-1)./delta_x_c(n).*...
                     ( 1+z_mo(i:i+s_mo-1).* (v(i+s_mo)-v(i+s_mo-eqn_ma))/2 );
@@ -716,7 +611,7 @@ while 1
         b(1:s_mo,1) = -v(1:s_mo,1)+c_f(1:s_mo);
         b(s_mo+1,1) = -v(s_mo+1,1);
 
-        b(end-eqn_ma+1:end-1,1) = -p(end-eqn_ma+1:end-1).*(v(end-eqn_ma+1:end-1)-v_n(end-eqn_ma+1:end-1))/dt...
+        b(end-eqn_ma+1:end-1,1) = -p_ma_vec(end-eqn_ma+1:end-1).*(v(end-eqn_ma+1:end-1)-v_n(end-eqn_ma+1:end-1))/dt...
                                + u* (v(end-2*eqn_ma+1:end-2*eqn_ma+s_mo,1)-v(end-eqn_ma+1:end-eqn_ma+s_mo,1)) /delta_x_f(end)...
                                -( D_eff_f(end-eqn_ma+1:end-1) .*( (v(end-eqn_ma+1:end-1,1)-v(end-2*eqn_ma+1:end-eqn_ma-1,1))./delta_x_f(end) + ...
                                + z_mo(end-eqn_ma+1:end-1,1).*(v(end-eqn_ma+1:end-1,1)+v(end-2*eqn_ma+1:end-eqn_ma-1,1))/2.*(v(end)-v(end-eqn_ma,1))./(delta_x_f(end)) )...
@@ -733,7 +628,7 @@ while 1
             % i - c1,n ; i+s - phi 
 
             % Constructing the first s terms, transport eq.
-            b(i:i+s_mo-1,1) = -p(i:i+s_mo-1).*(v(i:i+s_mo-1,1)-v_n(i:i+s_mo-1,1))/dt ...
+            b(i:i+s_mo-1,1) = -p_ma_vec(i:i+s_mo-1).*(v(i:i+s_mo-1,1)-v_n(i:i+s_mo-1,1))/dt ...
                            + ...
                            ( D_eff_f(i:i+s_mo-1) .*( (v(i+eqn_ma:i+s_mo-1+eqn_ma,1)-v(i:i+s_mo-1,1))./delta_x_f(n) + ...
                            + z_mo(i:i+s_mo-1,1).*(v(i+eqn_ma:i+s_mo-1+eqn_ma,1)+v(i:i+s_mo-1,1))/2.*(v(i+s_mo+eqn_ma)-v(i+s_mo,1))./(delta_x_f(n)) )...
@@ -913,7 +808,7 @@ while 1
                     index1 = i+s_mo+1:i+s_mo+s_ch;
                     index2 = index1;
                     num = length(index1);
-                    element = p_mi(i-diff)/dt*ones(num,1);
+                    element = p_mi_vec(i-diff)/dt*ones(num,1);
 
             
                     index1_J2_chem(current_index_J2_chem:current_index_J2_chem+num-1,1) = index1;
@@ -924,7 +819,7 @@ while 1
                     % Constructing the row for micropore charge balance eq.
                     index1 = i+s_mo;
                     index2 = i+s_mo+1:i+s_mo+s_ch;
-                    element = z_chem(1:s_ch);
+                    element = z_ch_input(1:s_ch);
                     num = length(element);
             
                     index1_J2_chem(current_index_J2_chem:current_index_J2_chem+num-1,1) = index1;
@@ -934,10 +829,10 @@ while 1
 
                   
                     % Constructing b2_chem matrix, for charge balance part
-                    b2_chem(i+s_mo,1) = -z_chem(1:s_ch)' *v2(i+s_mo+1:i+s_mo+s_ch)+b2_chem(i+s_mo,1);
+                    b2_chem(i+s_mo,1) = -z_ch_input(1:s_ch)' *v2(i+s_mo+1:i+s_mo+s_ch)+b2_chem(i+s_mo,1);
 
                     % Constructing b2_chem matrix, for time evolution part
-                    b2_chem(i+s_mo+1:i+s_mo+s_ch,1) = -p_mi(i-diff)/dt* (v2(i+s_mo+1:i+s_mo+s_ch)-v2_n(i+s_mo+1:i+s_mo+s_ch))+b2_chem(i+s_mo+1:i+s_mo+s_ch,1);
+                    b2_chem(i+s_mo+1:i+s_mo+s_ch,1) = -p_mi_vec(i-diff)/dt* (v2(i+s_mo+1:i+s_mo+s_ch)-v2_n(i+s_mo+1:i+s_mo+s_ch))+b2_chem(i+s_mo+1:i+s_mo+s_ch,1);
                     
                     % Reaction Rate for J2_chem_Rea & b2_chem_Rea
                     ii = (n-1)*eqn_mi; % zero index for the present unit
@@ -968,7 +863,7 @@ while 1
                             if j ~= 0 && j ~= index_H
                                 index1 = (ii+j)*ones(eqn_mi,1);
                                 index2 = ii+(1:eqn_mi)';
-                                element = p_mi(ii+1-diff)*Rea_array_L';
+                                element = p_mi_vec(ii+1-diff)*Rea_array_L';
                                 num = length(element);
 
                                 index1_J2_chem_Rea(current_index_J2_chem_Rea:current_index_J2_chem_Rea+num-1,1) = index1;
@@ -978,7 +873,7 @@ while 1
 
                             end
                             if j ~= 0 && j ~= index_H
-                                b2_chem_Rea(ii+j,1) = -p_mi(ii+1-diff)*Rea_array_R+b2_chem_Rea(ii+j,1);
+                                b2_chem_Rea(ii+j,1) = -p_mi_vec(ii+1-diff)*Rea_array_R+b2_chem_Rea(ii+j,1);
                             end
                         end
                 
@@ -986,7 +881,7 @@ while 1
                             if j ~= 0 && j ~= index_H
                                 index1 = (ii+j)*ones(eqn_mi,1);
                                 index2 = ii+(1:eqn_mi)';
-                                element = -p_mi(ii+1-diff)*Rea_array_L';
+                                element = -p_mi_vec(ii+1-diff)*Rea_array_L';
                                 num = length(element);
 
                                 index1_J2_chem_Rea(current_index_J2_chem_Rea:current_index_J2_chem_Rea+num-1,1) = index1;
@@ -996,7 +891,7 @@ while 1
    
                             end
                             if j ~= 0 && j ~= index_H
-                                b2_chem_Rea(ii+j,1) = p_mi(ii+1-diff)*Rea_array_R+b2_chem_Rea(ii+j,1);
+                                b2_chem_Rea(ii+j,1) = p_mi_vec(ii+1-diff)*Rea_array_R+b2_chem_Rea(ii+j,1);
                             end
                         end
                 
@@ -1094,7 +989,7 @@ while 1
                                 if j > eqn_ma
                                     index1 = (ii+j)*ones(eqn_mi,1);
                                     index2 = ii+(1:eqn_mi)';
-                                    element = -p_mi(ii+1-diff)*s_coeff_Oxi_A(k)*Rea_array_L';
+                                    element = -p_mi_vec(ii+1-diff)*s_coeff_Oxi_A(k)*Rea_array_L';
                                     num = length(element);
                         
                                     index1_J2_Fara_A(current_index_J2_Fara_A:current_index_J2_Fara_A+num-1,1) = index1;
@@ -1102,7 +997,7 @@ while 1
                                     element_J2_Fara_A(current_index_J2_Fara_A:current_index_J2_Fara_A+num-1,1) = element;
                                     current_index_J2_Fara_A = current_index_J2_Fara_A+num; 
             
-                                    b2_Fara_A(ii+j) = p_mi(ii+1-diff)*s_coeff_Oxi_A(k)*Rea_array_R + b2_Fara_A(ii+j);
+                                    b2_Fara_A(ii+j) = p_mi_vec(ii+1-diff)*s_coeff_Oxi_A(k)*Rea_array_R + b2_Fara_A(ii+j);
                                 end
                             end
                             
@@ -1111,7 +1006,7 @@ while 1
                                 if j > eqn_ma
                                     index1 = (ii+j)*ones(eqn_mi,1);
                                     index2 = ii+(1:eqn_mi)';
-                                    element = p_mi(ii+1-diff)*s_coeff_Red_A(k)*Rea_array_L';
+                                    element = p_mi_vec(ii+1-diff)*s_coeff_Red_A(k)*Rea_array_L';
                                     num = length(element);
                     
                                     index1_J2_Fara_A(current_index_J2_Fara_A:current_index_J2_Fara_A+num-1,1) = index1;
@@ -1119,7 +1014,7 @@ while 1
                                     element_J2_Fara_A(current_index_J2_Fara_A:current_index_J2_Fara_A+num-1,1) = element;
                                     current_index_J2_Fara_A = current_index_J2_Fara_A+num; 
             
-                                    b2_Fara_A(ii+j) = -p_mi(ii+1-diff)*s_coeff_Red_A(k)*Rea_array_R + b2_Fara_A(ii+j);
+                                    b2_Fara_A(ii+j) = -p_mi_vec(ii+1-diff)*s_coeff_Red_A(k)*Rea_array_R + b2_Fara_A(ii+j);
                                 end
                             end
                     
@@ -1209,7 +1104,7 @@ while 1
                                 if j > eqn_ma
                                     index1 = (ii+j)*ones(eqn_mi,1);
                                     index2 = ii+(1:eqn_mi)';
-                                    element = -p_mi(ii+1-diff)*s_coeff_Oxi_C(k)*Rea_array_L';
+                                    element = -p_mi_vec(ii+1-diff)*s_coeff_Oxi_C(k)*Rea_array_L';
                                     num = length(element);
                         
                                     index1_J2_Fara_C(current_index_J2_Fara_C:current_index_J2_Fara_C+num-1,1) = index1;
@@ -1217,7 +1112,7 @@ while 1
                                     element_J2_Fara_C(current_index_J2_Fara_C:current_index_J2_Fara_C+num-1,1) = element;
                                     current_index_J2_Fara_C = current_index_J2_Fara_C+num; 
             
-                                    b2_Fara_C(ii+j) = p_mi(ii+1-diff)*s_coeff_Oxi_C(k)*Rea_array_R + b2_Fara_C(ii+j);
+                                    b2_Fara_C(ii+j) = p_mi_vec(ii+1-diff)*s_coeff_Oxi_C(k)*Rea_array_R + b2_Fara_C(ii+j);
                                 end
                             end
                             
@@ -1226,7 +1121,7 @@ while 1
                                 if j > eqn_ma
                                     index1 = (ii+j)*ones(eqn_mi,1);
                                     index2 = ii+(1:eqn_mi)';
-                                    element = p_mi(ii+1-diff)*s_coeff_Red_C(k)*Rea_array_L';
+                                    element = p_mi_vec(ii+1-diff)*s_coeff_Red_C(k)*Rea_array_L';
                                     num = length(element);
                     
                                     index1_J2_Fara_C(current_index_J2_Fara_C:current_index_J2_Fara_C+num-1,1) = index1;
@@ -1234,7 +1129,7 @@ while 1
                                     element_J2_Fara_C(current_index_J2_Fara_C:current_index_J2_Fara_C+num-1,1) = element;
                                     current_index_J2_Fara_C = current_index_J2_Fara_C+num; 
             
-                                    b2_Fara_C(ii+j) = -p_mi(ii+1-diff)*s_coeff_Red_C(k)*Rea_array_R + b2_Fara_C(ii+j);
+                                    b2_Fara_C(ii+j) = -p_mi_vec(ii+1-diff)*s_coeff_Red_C(k)*Rea_array_R + b2_Fara_C(ii+j);
                                 end
                             end
                     
@@ -1302,7 +1197,7 @@ while 1
                         if j ~= 0
                             index1 = (ii+j)*ones(eqn_ma,1);
                             index2 = ii+(1:eqn_ma)';
-                            element = p(ii+j)*Rea_array_L';
+                            element = p_ma_vec(ii+j)*Rea_array_L';
                             num = length(element);
     
                             index1_J_Bulk_Rea(current_index_J_Bulk_Rea:current_index_J_Bulk_Rea+num-1,1) = index1;
@@ -1311,7 +1206,7 @@ while 1
                             current_index_J_Bulk_Rea = current_index_J_Bulk_Rea+num;
                         end
                         if j ~= 0
-                            b_Bulk_Rea(ii+j) = -p(ii+j)*Rea_array_R+b_Bulk_Rea(ii+j);
+                            b_Bulk_Rea(ii+j) = -p_ma_vec(ii+j)*Rea_array_R+b_Bulk_Rea(ii+j);
                         end
                     end
             
@@ -1320,7 +1215,7 @@ while 1
     
                             index1 = (ii+j)*ones(eqn_ma,1);
                             index2 = ii+(1:eqn_ma)';
-                            element = -p(ii+j)*Rea_array_L';
+                            element = -p_ma_vec(ii+j)*Rea_array_L';
                             num = length(element);
     
                             index1_J_Bulk_Rea(current_index_J_Bulk_Rea:current_index_J_Bulk_Rea+num-1,1) = index1;
@@ -1329,7 +1224,7 @@ while 1
                             current_index_J_Bulk_Rea = current_index_J_Bulk_Rea+num;       
                         end
                         if j ~= 0
-                            b_Bulk_Rea(ii+j) = p(ii+j)*Rea_array_R+b_Bulk_Rea(ii+j);
+                            b_Bulk_Rea(ii+j) = p_ma_vec(ii+j)*Rea_array_R+b_Bulk_Rea(ii+j);
                         end
                     end
     
@@ -1383,7 +1278,7 @@ while 1
                             if j ~= 0
                                 index1 = (ii+j)*ones(eqn_ma*N,1);
                                 index2 = (1:eqn_ma*N)';
-                                element = p_mi(ii+j)*Rea_array_L';
+                                element = p_mi_vec(ii+j)*Rea_array_L';
                                 num = length(element);
                 
                                 index1_J_Bulk_Rea_mi(current_index_J_Bulk_Rea_mi:current_index_J_Bulk_Rea_mi+num-1,1) = index1;
@@ -1392,7 +1287,7 @@ while 1
                                 current_index_J_Bulk_Rea_mi = current_index_J_Bulk_Rea_mi+num;
                             end
                             if j ~= 0
-                                b_Bulk_Rea_mi(ii+j) = -p_mi(ii+j)*Rea_array_R+b_Bulk_Rea_mi(ii+j);
+                                b_Bulk_Rea_mi(ii+j) = -p_mi_vec(ii+j)*Rea_array_R+b_Bulk_Rea_mi(ii+j);
                             end
                         end
                 
@@ -1400,7 +1295,7 @@ while 1
                             if j ~= 0
                                 index1 = (ii+j)*ones(eqn_ma*N,1);
                                 index2 = (1:eqn_ma*N)';
-                                element = -p_mi(ii+j)*Rea_array_L';
+                                element = -p_mi_vec(ii+j)*Rea_array_L';
                                 num = length(element);
                             
                                 index1_J_Bulk_Rea_mi(current_index_J_Bulk_Rea_mi:current_index_J_Bulk_Rea_mi+num-1,1) = index1;
@@ -1409,7 +1304,7 @@ while 1
                                 current_index_J_Bulk_Rea_mi = current_index_J_Bulk_Rea_mi+num;      
                             end
                             if j ~= 0
-                                b_Bulk_Rea_mi(ii+j) = p_mi(ii+j)*Rea_array_R+b_Bulk_Rea_mi(ii+j);
+                                b_Bulk_Rea_mi(ii+j) = p_mi_vec(ii+j)*Rea_array_R+b_Bulk_Rea_mi(ii+j);
                             end
                         end
                     end
@@ -1464,7 +1359,7 @@ while 1
                             if j == index_H
                                 index1 = (ii+j)*ones(eqn_ma*N,1)-diff;
                                 index2 = (1:eqn_ma*N)';
-                                element = p_mi(ii+1-diff)*Rea_array_L';
+                                element = p_mi_vec(ii+1-diff)*Rea_array_L';
                                 num = length(element);
                     
                                 index1_J_chem_Rea(current_index_J_chem_Rea:current_index_J_chem_Rea+num-1,1) = index1;
@@ -1473,7 +1368,7 @@ while 1
                                 current_index_J_chem_Rea = current_index_J_chem_Rea+num; 
                             end
                             if j == index_H
-                                b_chem_Rea((ii+j)-diff) = -p_mi(ii+1-diff)*Rea_array_R + b_chem_Rea((ii+j)-diff);
+                                b_chem_Rea((ii+j)-diff) = -p_mi_vec(ii+1-diff)*Rea_array_R + b_chem_Rea((ii+j)-diff);
                             end
                         end
                 
@@ -1481,7 +1376,7 @@ while 1
                             if j == index_H
                                 index1 = (ii+j)*ones(eqn_ma*N,1)-diff;
                                 index2 = (1:eqn_ma*N)';
-                                element = -p_mi(ii+1-diff)*Rea_array_L';
+                                element = -p_mi_vec(ii+1-diff)*Rea_array_L';
                                 num = length(element);
                 
                                 index1_J_chem_Rea(current_index_J_chem_Rea:current_index_J_chem_Rea+num-1,1) = index1;
@@ -1490,7 +1385,7 @@ while 1
                                 current_index_J_chem_Rea = current_index_J_chem_Rea+num; 
                             end
                             if j == index_H
-                                b_chem_Rea((ii+j)-diff) = p_mi(ii+1-diff)*Rea_array_R + b_chem_Rea((ii+j)-diff);
+                                b_chem_Rea((ii+j)-diff) = p_mi_vec(ii+1-diff)*Rea_array_R + b_chem_Rea((ii+j)-diff);
                             end
                         end
                 
@@ -1579,7 +1474,7 @@ while 1
                             if (j < eqn_ma) && (j ~= 0)
                                 index1 = (ii+j)*ones(eqn_ma*N,1)-diff;
                                 index2 = (1:eqn_ma*N)';
-                                element = -p_mi(ii+1-diff)*s_coeff_Oxi_A(k)*Rea_array_L';
+                                element = -p_mi_vec(ii+1-diff)*s_coeff_Oxi_A(k)*Rea_array_L';
                                 num = length(element);
                     
                                 index1_J_Fara_A(current_index_J_Fara_A:current_index_J_Fara_A+num-1,1) = index1;
@@ -1587,7 +1482,7 @@ while 1
                                 element_J_Fara_A(current_index_J_Fara_A:current_index_J_Fara_A+num-1,1) = element;
                                 current_index_J_Fara_A = current_index_J_Fara_A+num; 
         
-                                b_Fara_A(ii+j-diff) = p_mi(ii+1-diff)*s_coeff_Oxi_A(k)*Rea_array_R + b_Fara_A(ii+j-diff);
+                                b_Fara_A(ii+j-diff) = p_mi_vec(ii+1-diff)*s_coeff_Oxi_A(k)*Rea_array_R + b_Fara_A(ii+j-diff);
                             end
                         end
 
@@ -1596,7 +1491,7 @@ while 1
                             if (j < eqn_ma) && (j ~= 0)
                                 index1 = (ii+j)*ones(eqn_ma*N,1)-diff;
                                 index2 = (1:eqn_ma*N)';
-                                element = p_mi(ii+1-diff)*s_coeff_Red_A(k)*Rea_array_L';
+                                element = p_mi_vec(ii+1-diff)*s_coeff_Red_A(k)*Rea_array_L';
                                 num = length(element);
                 
                                 index1_J_Fara_A(current_index_J_Fara_A:current_index_J_Fara_A+num-1,1) = index1;
@@ -1604,7 +1499,7 @@ while 1
                                 element_J_Fara_A(current_index_J_Fara_A:current_index_J_Fara_A+num-1,1) = element;
                                 current_index_J_Fara_A = current_index_J_Fara_A+num; 
         
-                                b_Fara_A(ii+j-diff) = -p_mi(ii+1-diff)*s_coeff_Red_A(k)*Rea_array_R + b_Fara_A(ii+j-diff);
+                                b_Fara_A(ii+j-diff) = -p_mi_vec(ii+1-diff)*s_coeff_Red_A(k)*Rea_array_R + b_Fara_A(ii+j-diff);
                             end
                         end
                 
@@ -1693,7 +1588,7 @@ while 1
                             if (j < eqn_ma) && (j ~= 0)
                                 index1 = (ii+j)*ones(eqn_ma*N,1)-diff;
                                 index2 = (1:eqn_ma*N)';
-                                element = -p_mi(ii+1-diff)*s_coeff_Oxi_C(k)*Rea_array_L';
+                                element = -p_mi_vec(ii+1-diff)*s_coeff_Oxi_C(k)*Rea_array_L';
                                 num = length(element);
                     
                                 index1_J_Fara_C(current_index_J_Fara_C:current_index_J_Fara_C+num-1,1) = index1;
@@ -1701,7 +1596,7 @@ while 1
                                 element_J_Fara_C(current_index_J_Fara_C:current_index_J_Fara_C+num-1,1) = element;
                                 current_index_J_Fara_C = current_index_J_Fara_C+num; 
         
-                                b_Fara_C(ii+j-diff) = p_mi(ii+1-diff)*s_coeff_Oxi_C(k)*Rea_array_R + b_Fara_C(ii+j-diff);
+                                b_Fara_C(ii+j-diff) = p_mi_vec(ii+1-diff)*s_coeff_Oxi_C(k)*Rea_array_R + b_Fara_C(ii+j-diff);
                             end
                         end
 
@@ -1710,7 +1605,7 @@ while 1
                             if (j < eqn_ma) && (j ~= 0)
                                 index1 = (ii+j)*ones(eqn_ma*N,1)-diff;
                                 index2 = (1:eqn_ma*N)';
-                                element = p_mi(ii+1-diff)*s_coeff_Red_C(k)*Rea_array_L';
+                                element = p_mi_vec(ii+1-diff)*s_coeff_Red_C(k)*Rea_array_L';
                                 num = length(element);
                 
                                 index1_J_Fara_C(current_index_J_Fara_C:current_index_J_Fara_C+num-1,1) = index1;
@@ -1718,7 +1613,7 @@ while 1
                                 element_J_Fara_C(current_index_J_Fara_C:current_index_J_Fara_C+num-1,1) = element;
                                 current_index_J_Fara_C = current_index_J_Fara_C+num; 
         
-                                b_Fara_C(ii+j-diff) = -p_mi(ii+1-diff)*s_coeff_Red_C(k)*Rea_array_R + b_Fara_C(ii+j-diff);
+                                b_Fara_C(ii+j-diff) = -p_mi_vec(ii+1-diff)*s_coeff_Red_C(k)*Rea_array_R + b_Fara_C(ii+j-diff);
                             end
                         end
                 
@@ -1734,9 +1629,9 @@ while 1
         end
         %% 12. Calculate delta and update the variables
 
-        J_total_w = J+J_Bulk_Rea+J_Bulk_Rea_mi+J_chem_Rea+p_mi./dt.*Matrix_temp1+J_Fara_A+J_Fara_C;
+        J_total_w = J+J_Bulk_Rea+J_Bulk_Rea_mi+J_chem_Rea+p_mi_vec./dt.*Matrix_temp1+J_Fara_A+J_Fara_C;
 
-        b_total = b+b_Bulk_Rea+b_Bulk_Rea_mi+b_chem_Rea-p_mi./dt.*(Vector_temp1+b3)+b_Fara_A+b_Fara_C;
+        b_total = b+b_Bulk_Rea+b_Bulk_Rea_mi+b_chem_Rea-p_mi_vec./dt.*(Vector_temp1+b3)+b_Fara_A+b_Fara_C;
         
         delta = J_total_w\b_total;
  
