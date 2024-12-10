@@ -1,16 +1,59 @@
 clear;clc;
-%V16
-for initial_condition_solver = [1 0]
-%% Input Numerics
-% Mesh Points
-N1 = 10;
-N2 = 10;
 
-N = N1+N2;
-optimal_mesh = 1;
-uniform = 1;
-steady_state_solver = 0;
-driving_force = 1;% 1 - Potential Driven; 2 - Current Driven
+%% USER SETTINGS
+% Physical constants
+R = 8.3145;                 % J/(mol·K)
+T = 298;                    % K
+F = 96485;                  % C/mol
+V_T = R*T/F;                % V
+
+% Cell geometric parameters
+l_e = 6e-4;                 % m, electrode thickness
+l_res = l_e;                % m, reservoir thickness
+
+% Chemical parameters
+s_mo = 2;                   % Number of mobile species
+s_ch = 0;                   % Number of immobile species
+
+% Electrode properties
+C_S = 200e6;                %F/m^3, Stern Capacitance
+C_external = 29.4;          % F/m^2, External Capacitance
+m_e = 0.109*1e-3;           % kg, electrode mass
+EER = 0;                    % Ohm, TODO: where is this resistance?
+
+% CV Settings
+driving_force = 1;          % 1-Potential Driven; 2-Current Driven
+scan_rate = 10e-3;          % V/s
+V_magnitude = 0.6;          % V
+Smoothing_Zone = 0.1;       % s, smoothing transition from + to -
+A_c = 25*1e-6;              % m^2, total electrode cross sectional area
+
+% Numerical parameters
+N1 = 10;                    % Number of mesh points, reservoir region
+N2 = 10;                    % Number of mesh points, electrode region
+
+% Simulation options
+iteration_num = 6;          % Iterations (macro-micro coupling)
+optimal_mesh = 1;           % TODO: what is optional?
+uniform = 1;                % TODO: what is uniform?
+steady_state_solver = 0;    % TODO: what is steady_state
+Bulk_Reaction_switch = 0;   % DEBUG: turn off bulk reactions
+Faradaic_switch = 0;        % DEBUG: turn off Faradaic reactions
+
+%% DO NOT CHANGE BELOW
+% Simulation setup
+N = N1+N2;                  % Total number of mesh points
+eqn_ma = s_mo+1;            % Number of "macropore" eqns (+1 for phi)
+eqn_mi = eqn_ma+s_ch;       % Number of "micropore" eqns
+
+L = l_res + l_e;            % Total domain thickness
+
+Q_vol = 0;                  % m^3/s, flow rate (from FTE CDI, leave 0)
+u = Q_vol/A_c;              % m/s superficial velocity
+
+FCT = V_magnitude/scan_rate*4;%s
+Switch_Time = FCT/2;
+
 current_collect_index = floor(N1/2);
 t_restart = 0;
 
@@ -25,15 +68,6 @@ else
     save_all_name = 'CV_ALL.mat';
     save_name = 'CV.mat';
 end
-
-% Species
-s_mo = 2;       % Mobile species Num
-eqn_ma = s_mo+1;   % Macropore Equation number for each mesh unit
-s_ch = 0;       % Immobile chemical species Num
-eqn_mi = eqn_ma+s_ch;   % Macropore Equation number for each mesh unit
-iteration_num = 6;
-Bulk_Reaction_switch = 0;
-Faradaic_switch = 0;
 
 % Time & Plot
 dt_initial = 1e-1;
@@ -82,36 +116,12 @@ phi_el_saved = nan(t_final*2,1);
 saved_data_index = 1;
 
 %% Initialization
-% Input Physics
+% TODO - ELIMINATE THIS CONDITIONAL
 if initial_condition_solver == 1
-    l_e = 1e-4/1e2; %m
+    l_e = 1e-4/1e2;         % m, electrode thickness
 else
-    l_e = 6e-4; %m
+    l_e = 6e-4;             % m
 end
-l_sep = 0;%65e-6+5/2*l_e;%65e-6; %m
-l_res = 1*l_e;
-L = 1*l_res+1*l_e+l_sep;
-
-R = 8.3145;    %J/(mol·K)
-T = 298;    %K
-F = 96485;   %C/mol
-V_T = R*T/F;    %V
-
-A_c = 25*1e-6;  %m^2
-Q_vol = 0;%1e-6/60;    %m^3/s
-u = Q_vol/A_c;
-
-C_S = 200e6;  %F/m^3, Stern Capacitance,200e6,200e-7
-C_external = 29.4;% F/m^2, External Capacitance
-m_e = 0.109*1e-3; %kg
-EER = 0; %Ohm, 2.57
-
-% Operation Parameters
-scan_rate = 10e-3;%V/s
-V_magnitude = 0.6;
-FCT = V_magnitude/scan_rate*4;%s
-Switch_Time = FCT/2;
-Smoothing_Zone = 0.1;%s
 
 if driving_force == 1
     V_discharge = 0;%V 
@@ -442,127 +452,6 @@ while 1
 
 
     if mod(t_plotting_index,100) == 0
-
-%         figure(1)
-%         clf
-%         hold on
-%         for i = [1 2 3]%[1 3]
-%             plot(x_c,v(i:eqn_ma:N*eqn_ma),'-o')
-%         end
-%         hold off
-%         text(0,1,sprintf('t=%f',t))
-% %         xlim([0.75*l_e l_e+l_sep+0.25*l_e])
-%         xlabel('x')
-%         ylabel('c')
-%         legend('R','O')
-%         drawnow
-% %             
-%         figure(2)
-%         clf
-%         hold on
-%         for i = [1 2 3]%[1 3]
-%             plot(x_c,v2(i:eqn_mi:N*eqn_mi),'-o')
-%         end    
-% %         for i = eqn_ma+1:eqn_mi
-% %             plot(x_c,v2(i:eqn_mi:N*eqn_mi),'-o')
-% %         end    
-% %         plot(x_c,v2(index_HX:eqn_mi:N*eqn_mi)+v2(index_X:eqn_mi:N*eqn_mi),'-o')
-% %         plot(x_c,v2(index_HY:eqn_mi:N*eqn_mi)+v2(index_Y:eqn_mi:N*eqn_mi),'-o')
-%         hold off
-%         xlabel('x')
-%         ylabel('c_{mi}')
-%         legend('R','Cl','O')
-%         drawnow
-% %     
-%         figure(3)
-%         clf
-%         hold on
-%         plot(x_c,v(eqn_ma:eqn_ma:N*eqn_ma),'-o')
-%         plot(x_c,v2(eqn_ma:eqn_mi:N*eqn_mi)*F/V_T/C_S,'-o')
-%         plot(x_c,phi_el-v(eqn_ma:eqn_ma:N*eqn_ma)-v2(eqn_ma:eqn_mi:N*eqn_mi)*F/V_T/C_S,'-o')
-%         plot(x_c,phi_el,'-o')
-%         hold off
-%         xlabel('x')
-%         ylabel('\phi')
-%         legend('\phi','\phi_{St}','\phi_{Donnan}','\phi_{electrode}')
-%         drawnow
-% %     
-%         figure(4)
-%         clf
-%         hold on
-%         plot(x_c,v2(s_mo+1:eqn_mi:N*eqn_mi),'-o')
-%         hold off
-%         xlabel('x')
-%         ylabel('\sigma_{ele}')
-%         drawnow
-    % 
-%         figure(5)
-%         clf
-%         hold on
-%         plot(x_f(2:end-1)',flux_1_E,'-o')
-%         plot(x_f(2:end-1)',flux_1_D,'-o')
-%         hold off
-%         legend('ELE','Diff')
-%         xlabel('x')
-%         ylabel('Flux')
-%         drawnow
-    %     
-%         figure(6)
-%         clf
-%         hold on
-%         for i = index_H
-%             plot(x_c,-log10(v(i:eqn_ma:N*eqn_ma)/1e3),'-o')
-%         end
-%         plot(x_c,-log10(v(index_H:eqn_ma:N*eqn_ma)/1e3) -log10(v(index_OH:eqn_ma:N*eqn_ma)/1e3),'-o')
-%         hold off
-%         text(3e-3,14,sprintf('t=%.2f',t))
-%     %     xlim([0 L-2*l_res])
-%     %     ylim([12 16])
-%         xlabel('x')
-%         ylabel('pH_{mA},(pH+pOH)_{mA}')
-%         drawnow
-%     
-%         figure(7)
-%         clf
-%         hold on
-%         for i = index_H
-%             plot(x_c,-log10(v2(i:eqn_mi:N*eqn_mi)/1e3),'-o')
-%         end
-%         plot(x_c,-log10(v2(index_H:eqn_mi:N*eqn_mi)/1e3) -log10(v2(index_OH:eqn_mi:N*eqn_mi)/1e3),'-o')
-% %         plot(x_c,-log10(v2(index_H:eqn_mi:N*eqn_mi).*v2(index_X:eqn_mi:N*eqn_mi)./v2(index_HX:eqn_mi:N*eqn_mi)/1e3),'-o')
-% %         plot(x_c,-log10(v2(index_H:eqn_mi:N*eqn_mi).*v2(index_Y:eqn_mi:N*eqn_mi)./v2(index_HY:eqn_mi:N*eqn_mi)/1e3),'-o')
-%         plot(x_c,-log10(v2(index_H:eqn_mi:N*eqn_mi).*v2(index_COO:eqn_mi:N*eqn_mi)./v2(index_COOH:eqn_mi:N*eqn_mi)/1e3),'-o')
-% 
-%         hold off
-%         text(3e-3,14,sprintf('t=%.2f',t))
-%         legend('pH','pH+pOH','pKa5','pKa9','pKa9.5')
-%     %     ylim([12 16])
-%         xlabel('x')
-%         ylabel('pH & pKa')
-%         drawnow
-
-%         figure(8)
-%         clf
-%         hold on
-%         plot(t_plotting_array,c_eff_array,'g')
-%         xlabel('t')
-%         ylabel('c_eff')
-% 
-%         figure(9)
-%         clf
-%         hold on
-% 
-%         plot(x_c,v2(index_COO:eqn_mi:end),'-o')
-%         plot(x_c,v2(index_COO:eqn_mi:end)+v2(index_COOH:eqn_mi:end),'-o') % Total
-% 
-%         hold off
-%         text(3e-3,14,sprintf('t=%.2f',t))
-%         xlim([0 2*l_e+l_sep])
-%         legend('COO','COOH+COO')
-% %         ylim([12 16])
-%         xlabel('x')
-%         ylabel('Concentration[mM]')
-%         drawnow
 
         figure(11)
         clf
@@ -1855,81 +1744,6 @@ while 1
         delta2 = J2_sum\b2_sum+J2_sum\J3*delta;
 
         v2 = v2+delta2;
-        
-
-%         figure(1)
-%         clf
-%         hold on
-%         summation = 0;
-%         for i = 1:s_mo
-%             summation = summation + z_mo_input(i).*v(i:eqn_ma:N*eqn_ma);
-%         %             plot(x_c,v(i:eqn_ma:N*eqn_ma),'-o')
-%         end
-%         plot(x_c,summation,'-o')
-%         hold off
-%         text(3e-3,10,sprintf('t=%f',t))
-%         %         xlim([0.75*l_e l_e+l_sep+0.25*l_e])
-%         xlabel('x')
-%         ylabel('c')
-%         drawnow
-%             
-%         figure(2)
-%         clf
-%         hold on
-%         for i = 1:s_mo
-%             plot(x_c,v2(i:eqn_mi:N*eqn_mi),'-o')
-%         end    
-% %         for i = eqn_ma+1:eqn_mi
-% %             plot(x_c,v2(i:eqn_mi:N*eqn_mi),'-o')
-% %         end    
-% %         plot(x_c,v2(index_HX:eqn_mi:N*eqn_mi)+v2(index_X:eqn_mi:N*eqn_mi),'-o')
-% %         plot(x_c,v2(index_HY:eqn_mi:N*eqn_mi)+v2(index_Y:eqn_mi:N*eqn_mi),'-o')
-% 
-%         hold off
-%         xlabel('x')
-%         ylabel('c_{mi}')
-%         drawnow
-% % % 
-%         figure(3)
-%         clf
-%         hold on
-%         plot(x_c,v(eqn_ma:eqn_ma:N*eqn_ma),'-o')
-%         plot(x_c,v2(eqn_ma:eqn_mi:N*eqn_mi)*F/V_T/C_S,'-o')
-%         plot(x_c,phi_el-v(eqn_ma:eqn_ma:N*eqn_ma)-v2(eqn_ma:eqn_mi:N*eqn_mi)*F/V_T/C_S,'-o')
-%         plot(x_c,phi_el,'-o')
-%         hold off
-%         xlabel('x')
-%         ylabel('\phi')
-%         legend('\phi','\phi_{St}','\phi_{Donnan}','\phi_{electrode}')
-%         drawnow
-% % 
-%     figure(4)
-%     clf
-%     hold on
-%     plot(x_c,v2(eqn_ma:eqn_mi:N*eqn_mi),'-o')
-%     hold off
-%     xlabel('x')
-%     ylabel('\sigma_{ele}')
-%     drawnow
-
-%     figure(7)
-%     clf
-%     hold on
-%     for i = 3
-%         plot(x_c,-log10(v2(i:eqn_mi:N*eqn_mi)/1e3),'-o')
-%     end
-%     plot(x_c,-log10(v2(3:eqn_mi:N*eqn_mi)/1e3) -log10(v2(4:eqn_mi:N*eqn_mi)/1e3),'-o')
-%     plot(x_c,-log10(v2(3:eqn_mi:N*eqn_mi).*v2(7:eqn_mi:N*eqn_mi)./v2(6:eqn_mi:N*eqn_mi)/1e3),'-o')
-%     plot(x_c,-log10(v2(3:eqn_mi:N*eqn_mi).*v2(9:eqn_mi:N*eqn_mi)./v2(8:eqn_mi:N*eqn_mi)/1e3),'-o')
-% 
-%     hold off
-%     text(3e-3,14,sprintf('t=%.2f',t))
-%     legend('pH','pH+pOH','pKa5','pKa9')
-% %     ylim([12 16])
-%     xlabel('x')
-%     ylabel('pH & pKa')
-%         drawnow
-
 
     end
 
@@ -1989,7 +1803,6 @@ while 1
         v = v_n;
         v2 = v2_n;
     end
-end
 end
 
 function save_function(save_all_index,initial_condition_solver,v,v2,t,phi_el_value,save_name,save_all_name,save_path)
