@@ -1,6 +1,6 @@
 clear;clc;
 %V16
-for initial_condition_solver = [1 0]
+for initial_condition_solver = [0]
 %% Input Numerics
 % Mesh Points
 N1 = 10;
@@ -27,13 +27,13 @@ else
 end
 
 % Species
-s_mo = 2;       % Mobile species Num
+s_mo = 6;       % Mobile species Num
 eqn_ma = s_mo+1;   % Macropore Equation number for each mesh unit
-s_ch = 0;       % Immobile chemical species Num
+s_ch = 2;       % Immobile chemical species Num
 eqn_mi = eqn_ma+s_ch;   % Macropore Equation number for each mesh unit
 iteration_num = 6;
-Bulk_Reaction_switch = 0;
-Faradaic_switch = 0;
+Bulk_Reaction_switch = 1;
+Faradaic_switch = 1;
 
 % Time & Plot
 dt_initial = 1e-1;
@@ -41,7 +41,7 @@ dt = dt_initial;
 if initial_condition_solver == 1
     dt_interval = 1e1;
 else
-    dt_interval = 1e-1;
+    dt_interval = 1e2;
 end
 plot_dt_check = @(t) mod(t,10);
 
@@ -53,7 +53,7 @@ if steady_state_solver == 1
     t_plan = linspace(0,t_final,ceil(t_final/dt_interval)+1);   % desired plot times
 else
     t_final = 1e4;        % final time
-    dt_max = dt_interval;
+    dt_max = 1e-1;
     dt_min = 0.001;
 %     t_plan = linspace(0,t_final,ceil(t_final/dt_interval)+1);   % desired plot times
     t_plan = linspace(t_restart,t_final,ceil((t_final-t_restart)/dt_interval)+1);   % desired plot times
@@ -107,7 +107,7 @@ m_e = 0.109*1e-3; %kg
 EER = 0; %Ohm, 2.57
 
 % Operation Parameters
-scan_rate = 10e-3;%V/s
+scan_rate = 1e-3;%V/s
 V_magnitude = 0.6;
 FCT = V_magnitude/scan_rate*4;%s
 Switch_Time = FCT/2;
@@ -127,12 +127,12 @@ p_mi_value = 0.172;%0.172;
 p_res_value = 1;
 
 % Mobile group
-index_R = 10;
+index_R = 1;
 index_Cl = 2;
-index_O = 30;
-index_K = 1;
-index_H = 4;
-index_OH = 5;
+index_O = 3;
+index_K = 4;
+index_H = 5;
+index_OH = 6;
 
 % Immobile group
 index_COOH = eqn_ma+1;
@@ -169,7 +169,7 @@ mu_att = [mu_R;mu_Cl;mu_O;mu_K;mu_H;mu_OH];
 
 pH_feed = 7;
 
-c_f_Cl = 1000;    % mM or mol/m^3
+c_f_Cl = 1020;    % mM or mol/m^3
 c_f_H = 10^(3-pH_feed);
 c_f_OH = 10^(-11+pH_feed);
 c_f_O = 10;
@@ -181,7 +181,7 @@ c_i_HX = 0;
 c_i_X = 0;
 c_i_YH = c_i_X;
 c_i_Y = c_i_HX;
-c_i_COOH = 100;
+c_i_COOH = 0;
 c_i_COO = 0;
 c_f = [c_f_K;c_f_Cl;c_f_O;c_f_K;c_f_H;c_f_OH];  %mol/m^3, feed concentration
 c_i = [c_f_K;c_f_Cl;c_f_O;c_f_K;c_f_H;c_f_OH;0];
@@ -201,7 +201,7 @@ R_bulk_mi = [0, index_H;
 P_bulk_mi = [index_H, 0;
              index_OH, 0];
 
-k_chem = [1e4,1e8]/1e2;
+k_chem = [1e4,1e8] * 0;
 
 R_chem = [index_COOH, index_H;
           0,          index_COO];
@@ -249,9 +249,9 @@ delta_x_f = (x_c(2:end)-x_c(1:end-1));
 
 
 
-figure(10)
-plot(x_c,1,'-o');
-xline([-l_res 0 l_e])
+%figure(10)
+%plot(x_c,1,'-o');
+%xline([-l_res 0 l_e])
 
 % Initialization - Memory
 v_plot = nan(N*eqn_ma,length(t_saved));
@@ -309,10 +309,15 @@ s_coeff_Red_C = 1;
 n_ele_C = [1];
 
 J_C = 1e-9; %A/m^2
-K_R = 1e-12;
-K_O = K_R/exp(-0.45/V_T);
+K_R = 2.5e4;
+K_O = K_R/exp(0.45/V_T);
 beta_C = sqrt(K_R*K_O);
 OCV_rel_dimensional = log(K_R/K_O)*V_T;%E_C - E_A;
+
+%K_R = 0;
+%K_O = 0;
+%beta_C = sqrt(K_R*K_O);
+%OCV_rel_dimensional = 0;%E_C - E_A;
 
 index1_J2_Fara_C = nan((N*eqn_mi)^2,1);
 index2_J2_Fara_C = index1_J2_Fara_C;
@@ -425,6 +430,7 @@ while 1
                  (V_magnitude-scan_rate*mod(t-FCT/4,FCT)).*(0<mod(t-FCT/4,FCT)).*(mod(t-FCT/4,FCT)<Switch_Time)+...
                  (-V_magnitude+scan_rate*mod(t-FCT*3/4,FCT)).*(0<=mod(t-FCT*3/4,FCT)).*(mod(t-FCT*3/4,FCT)<=Switch_Time).*(t>FCT/4);
         V_app = -V_app;
+
     end
     
     %%Plot while Solving
@@ -564,7 +570,7 @@ while 1
 %         ylabel('Concentration[mM]')
 %         drawnow
 
-        figure(11)
+        figure(13)
         clf
         hold on
 %         c_index = @(N) (N-1)*eqn_ma;
@@ -573,7 +579,7 @@ while 1
         ylabel('current')
 %         ylim([0.18 0.82])
 
-        figure(12)
+        figure(14)
         clf
         hold on
 %         c_index = @(N) (N-1)*eqn_ma;
@@ -581,13 +587,13 @@ while 1
         xlabel('V')
         ylabel('current')
 
-        figure(13)
-        clf
-        hold on
+%        figure(13)
+%        clf
+%        hold on
 %         c_index = @(N) (N-1)*eqn_ma;
-        plot(t_plotting_array,dt_plotting_array,'g')
-        xlabel('t')
-        ylabel('dt')
+%        plot(t_plotting_array,dt_plotting_array,'g')
+%        xlabel('t')
+%        ylabel('dt')
     end
 
     if ( t == t_saved(pc) )
@@ -1197,7 +1203,7 @@ while 1
                             Rea_array_L_Oxi = Rea_array_L_Oxi * beta_A(m)/2*sqrt(Pi_R/Pi_O)*(sinh_term-cosh_term);
                             Rea_array_L(eqn_ma) = Rea_array_L(eqn_ma) + beta_A(m)*sqrt(Pi_R*Pi_O)*cosh_term*n_ele_A(m)/2*F/V_T/C_S;   %Sigma_ele contribution
             
-                            Rea_array_L = Rea_array_L+Rea_array_L_Red+Rea_array_L_Oxi;
+                            Rea_array_L = Rea_array_L + Rea_array_L_Red + Rea_array_L_Oxi;
                             Rea_array_R = beta_A(m)*sqrt(Pi_R*Pi_O)*sinh_term + Rea_array_R;
             
                             for k = 1:length(Oxi_A(:,m)) % Construct J and b only in a unit cell
@@ -1279,8 +1285,8 @@ while 1
                                 end
                             end
             
-                            sinh_term = sinh(n_ele_C(m)/2* ((F/V_T/C_S)*v2(ii+eqn_ma)-OCV_rel_dimensional/V_T+1/n_ele_C(m)*log(Pi_R/Pi_O)) );
-                            cosh_term = cosh(n_ele_C(m)/2* ((F/V_T/C_S)*v2(ii+eqn_ma)-OCV_rel_dimensional/V_T+1/n_ele_C(m)*log(Pi_R/Pi_O)) );
+                            sinh_term = sinh(n_ele_C(m)/2* ((F/V_T/C_S)*(v2(ii+eqn_ma))-OCV_rel_dimensional/V_T+1/n_ele_C(m)*log(Pi_R/Pi_O)) );
+                            cosh_term = cosh(n_ele_C(m)/2* ((F/V_T/C_S)*(v2(ii+eqn_ma))-OCV_rel_dimensional/V_T+1/n_ele_C(m)*log(Pi_R/Pi_O)) );
                         
                             for k = 1:length(Oxi_C(:,m))  % Construct the reaction horizontal vetcor for J & b later
                                 j = Oxi_C(k,m); % Reaction species index in local J2 matrix domain
@@ -1763,8 +1769,8 @@ while 1
                             end
                         end
         
-                        sinh_term = sinh(n_ele_C(m)/2* ((F/V_T/C_S)*v2(ii+eqn_ma)-OCV_rel_dimensional/V_T+1/n_ele_C(m)*log(Pi_R/Pi_O)) );
-                        cosh_term = cosh(n_ele_C(m)/2* ((F/V_T/C_S)*v2(ii+eqn_ma)-OCV_rel_dimensional/V_T+1/n_ele_C(m)*log(Pi_R/Pi_O)) );
+                        sinh_term = sinh(n_ele_C(m)/2* ((F/V_T/C_S)*(v2(ii+eqn_ma))-OCV_rel_dimensional/V_T+1/n_ele_C(m)*log(Pi_R/Pi_O)) );
+                        cosh_term = cosh(n_ele_C(m)/2* ((F/V_T/C_S)*(v2(ii+eqn_ma))-OCV_rel_dimensional/V_T+1/n_ele_C(m)*log(Pi_R/Pi_O)) );
                        
                         for k = 1:length(Oxi_C(:,m))  % Construct the reaction horizontal vetcor for J & b later
                             j = Oxi_C(k,m); % Reaction species index in local J2 matrix domain
@@ -1794,10 +1800,16 @@ while 1
                         end
                         Rea_array_L_Red = Rea_array_L_Red * beta_C(m)/2*sqrt(Pi_O/Pi_R)*(sinh_term+cosh_term);
                         Rea_array_L_Oxi = Rea_array_L_Oxi * beta_C(m)/2*sqrt(Pi_R/Pi_O)*(sinh_term-cosh_term);
-                        Rea_array_L = Rea_array_L + beta_C(m)*sqrt(Pi_R*Pi_O)*cosh_term*n_ele_C(m)/2*F/V_T/C_S.*Matrix_temp1_full(ii+eqn_ma,:);   %Sigma_ele contribution
+                        %Rea_array_L = Rea_array_L + beta_C(m)*sqrt(Pi_R*Pi_O)*cosh_term*n_ele_C(m)/2*F/V_T/C_S.*Matrix_temp1_full(ii+eqn_ma,:);   %Sigma_ele contribution
         
-                        Rea_array_L = Rea_array_L+Rea_array_L_Red+Rea_array_L_Oxi;
+                        Rea_array_L = Rea_array_L + Rea_array_L_Red + Rea_array_L_Oxi;
                         Rea_array_R = beta_C(m)*sqrt(Pi_R*Pi_O)*sinh_term + Rea_array_R;
+
+                        if n == 15 && iterations == 6
+                            part1 = (F/V_T/C_S)*(v2(ii+eqn_ma)) 
+                            part2 = - OCV_rel_dimensional/V_T 
+                            part3 =  1/n_ele_C(m)*log(Pi_R/Pi_O)
+                        end
         
                         for k = 1:length(Oxi_C(:,m))
                             j = Oxi_C(k,m); % Construct J and b only in a unit cell
@@ -1969,14 +1981,14 @@ while 1
             end
             dt_count = 0;
         end
-        if steady_state_solver == 0
-            % Reassign initial time step for unsteady state solver
-            if mod(t,FCT) == 0 || mod(t,FCT) == Switch_Time
-                dt = dt_min;
-                dt_count = 0;
-                continue
-            end
-        end
+%        if steady_state_solver == 0
+%            % Reassign initial time step for unsteady state solver
+%            if mod(t,FCT) == 0 || mod(t,FCT) == Switch_Time
+%                dt = dt_min;
+%                dt_count = 0;
+%                continue
+%            end
+%        end
         % Make sure the saved time is integer
         if (t_plan(saved_data_index)-(t+dt)) < 1e-10 || t+dt > t_plan(saved_data_index)
             dt_stored = dt;
